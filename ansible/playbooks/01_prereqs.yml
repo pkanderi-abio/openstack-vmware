@@ -1,0 +1,67 @@
+---
+- name: Kolla-Ansible prerequisites setup
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Show selected Kolla-Ansible version
+      debug:
+        msg: >-
+          Using Kolla-Ansible version {{
+            kolla_ansible_version
+            | default(
+                lookup(
+                  'pipe',
+                  "pip show kolla-ansible 2>/dev/null | awk '/Version:/ {print $2}'"
+                )
+            )
+            | trim
+          }}
+
+    - name: Install kolla-ansible via pip
+      pip:
+        name: "kolla-ansible=={{ kolla_ansible_version | default('18.0.0') }}"
+        executable: pip3
+
+    - name: "Detect collection-based roles path (v18+)"
+      set_fact:
+        kolla_roles_path: >-
+          {{
+            lookup(
+              'pipe',
+              "python3 -c 'import os, kolla_ansible; "
+              "path=os.path.join(os.path.dirname(kolla_ansible.__file__), "
+              "\"ansible\", \"collections\", \"ansible_collections\", "
+              "\"openstack\", \"kolla\", \"roles\"); "
+              "print(path) if os.path.isdir(path) else \"\"'"
+            ) | trim
+          }}
+
+    - name: Debug detected roles path
+      debug:
+        var: kolla_roles_path
+
+    - name: Copy Kolla-Ansible roles if path exists
+      command: >-
+        rsync -a {{ kolla_roles_path }}/ /usr/local/share/kolla-ansible/ansible/roles/
+      when: kolla_roles_path | length > 0
+
+    - name: "Fallback: Detect legacy roles path (<v18)"
+      set_fact:
+        kolla_roles_path: >-
+          {{
+            lookup(
+              'pipe',
+              "python3 -c 'import os, kolla_ansible; "
+              "path=os.path.join(os.path.dirname(kolla_ansible.__file__), "
+              "\"ansible\", \"roles\"); "
+              "print(path) if os.path.isdir(path) else \"\"'"
+            ) | trim
+          }}
+      when: kolla_roles_path | length == 0
+
+    - name: Copy legacy roles if path exists
+      command: >-
+        rsync -a {{ kolla_roles_path }}/ /usr/local/share/kolla-ansible/ansible/roles/
+      when: kolla_roles_path | length > 0

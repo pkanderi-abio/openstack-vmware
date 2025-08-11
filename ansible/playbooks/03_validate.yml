@@ -1,0 +1,33 @@
+---
+- hosts: all[0]
+  become: yes
+  tasks:
+    - name: Ensure admin-openrc.sh exists
+      stat:
+        path: /etc/kolla/admin-openrc.sh
+      register: openrc_file
+
+    - name: Fail if admin-openrc.sh is missing
+      fail:
+        msg: "admin-openrc.sh not found. OpenStack may not have deployed correctly."
+      when: not openrc_file.stat.exists
+
+    - name: Check OpenStack services
+      shell: |
+        source /etc/kolla/admin-openrc.sh
+        openstack service list
+      register: service_list
+      changed_when: false
+
+    - debug:
+        var: service_list.stdout_lines
+
+    - name: List compute services
+      shell: |
+        source /etc/kolla/admin-openrc.sh
+        openstack compute service list
+      register: compute_list
+      changed_when: false
+
+    - debug:
+        var: compute_list.stdout_lines

@@ -1,0 +1,16 @@
+---
+# Run kolla-ansible only from the first node
+- hosts: all[0]
+  become: yes
+  tasks:
+    - name: Bootstrap servers
+      command: kolla-ansible bootstrap-servers -i /etc/kolla/multinode
+
+    - name: Run prechecks
+      command: kolla-ansible prechecks -i /etc/kolla/multinode
+
+    - name: Deploy OpenStack
+      command: kolla-ansible deploy -i /etc/kolla/multinode
+
+    - name: Post-deploy
+      command: kolla-ansible post-deploy -i /etc/kolla/multinode
