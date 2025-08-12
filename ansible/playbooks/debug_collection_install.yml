@@ -1,0 +1,96 @@
+---
+- name: Debug and fix collection installation
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check current collection installation paths
+      shell: |
+        echo "=== Ansible Configuration ==="
+        ansible-config dump | grep COLLECTIONS_PATHS
+        echo ""
+        echo "=== Current Collections ==="
+        ansible-galaxy collection list 2>/dev/null || echo "No collections found"
+        echo ""
+        echo "=== Collection Paths ==="
+        find /root -name "ansible_collections" -type d 2>/dev/null || echo "No ansible_collections found"
+        find /usr -name "ansible_collections" -type d 2>/dev/null || echo "No ansible_collections in /usr"
+        echo ""
+        echo "=== Home directory ==="
+        ls -la /root/.ansible/ 2>/dev/null || echo "No .ansible directory"
+      register: collection_debug
+      changed_when: false
+
+    - name: Show collection debug info
+      debug:
+        msg: "{{ collection_debug.stdout_lines }}"
+
+    - name: Force install collection to system location
+      shell: |
+        # Install to the system-wide location
+        ansible-galaxy collection install openstack.kolla:4.0.0 --force -p /usr/share/ansible/collections/
+      register: system_install
+      changed_when: system_install.rc == 0
+
+    - name: Show system install results
+      debug:
+        msg: "{{ system_install.stdout_lines }}"
+
+    - name: Verify system collection installation
+      shell: |
+        echo "=== System Collections ==="
+        ls -la /usr/share/ansible/collections/ansible_collections/openstack/ 2>/dev/null || echo "Not found in system location"
+        echo ""
+        echo "=== All Collection Locations ==="
+        ansible-galaxy collection list openstack.kolla
+      register: verify_system
+      changed_when: false
+
+    - name: Show verification results
+      debug:
+        msg: "{{ verify_system.stdout_lines }}"
+
+    - name: Check if baremetal role exists in collection
+      shell: |
+        find /usr/share/ansible/collections/ -name "baremetal" -type d 2>/dev/null || echo "Baremetal role not found"
+        find /root/.ansible/ -name "baremetal" -type d 2>/dev/null || echo "Baremetal role not found in user location"
+      register: role_check
+      changed_when: false
+
+    - name: Show role check results
+      debug:
+        msg: "{{ role_check.stdout_lines }}"
+
+    - name: Test ansible-playbook with collection path
+      shell: |
+        ANSIBLE_COLLECTIONS_PATHS=/usr/share/ansible/collections:/root/.ansible/collections ansible-galaxy collection list openstack.kolla
+      register: path_test
+      changed_when: false
+      failed_when: false
+
+    - name: Show path test results
+      debug:
+        msg: "{{ path_test.stdout_lines }}"
+
+    - name: Create ansible.cfg to set collections path
+      copy:
+        dest: /etc/ansible/ansible.cfg
+        content: |
+          [defaults]
+          collections_paths = /usr/share/ansible/collections:/root/.ansible/collections
+          host_key_checking = False
+          
+          [inventory]
+          enable_plugins = ini, yaml, auto
+        mode: '0644'
+
+    - name: Final test with new config
+      shell: kolla-ansible bootstrap-servers -i /etc/kolla/multinode --check
+      register: final_test
+      changed_when: false
+      failed_when: false
+
+    - name: Show final test results
+      debug:
+        msg: "Final test: {{ 'PASSED' if final_test.rc == 0 else 'FAILED - ' + (final_test.stderr | default('Unknown error')) }}"

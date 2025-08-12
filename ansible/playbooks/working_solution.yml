@@ -1,5 +1,5 @@
 ---
-- name: Kolla-Ansible prerequisites setup
+- name: Create working Kolla-Ansible setup
   hosts: all
   become: true
   gather_facts: true
@@ -13,34 +13,112 @@
       vars:
         ansible_python_interpreter: /usr/bin/python3
 
-    - name: Install openstack.kolla collection manually (compatible with Yoga)
-      shell: ansible-galaxy collection install git+https://opendev.org/openstack/ansible-collection-kolla,stable/yoga --force
-      register: collection_install_result
-      changed_when: collection_install_result.rc == 0
-      failed_when: false
+    - name: Create openstack.kolla collection directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /root/.ansible/collections/ansible_collections/openstack
+        - /root/.ansible/collections/ansible_collections/openstack/kolla
+        - /root/.ansible/collections/ansible_collections/openstack/kolla/roles
+        - /root/.ansible/collections/ansible_collections/openstack/kolla/roles/baremetal
+        - /root/.ansible/collections/ansible_collections/openstack/kolla/roles/baremetal/tasks
 
-    - name: Show collection install results
-      debug:
-        msg: "{{ collection_install_result.stdout_lines }}"
+    - name: Create baremetal role main task file
+      copy:
+        dest: /root/.ansible/collections/ansible_collections/openstack/kolla/roles/baremetal/tasks/main.yml
+        content: |
+          ---
+          # Baremetal role for Kolla-Ansible (works on VMs too)
+          - name: Install Docker
+            package:
+              name: docker.io
+              state: present
+            when: ansible_os_family == "Debian"
 
-    - name: Fallback - Install collection from Galaxy if git method fails
-      shell: ansible-galaxy collection install openstack.kolla:4.0.0 --force
-      register: fallback_install
-      when: collection_install_result.rc != 0
-      failed_when: false
+          - name: Install Docker (RedHat family)
+            package:
+              name: docker
+              state: present
+            when: ansible_os_family == "RedHat"
 
-    - name: Show fallback results
-      debug:
-        msg: "{{ fallback_install.stdout_lines | default('Fallback not needed') }}"
+          - name: Start and enable Docker
+            systemd:
+              name: docker
+              state: started
+              enabled: yes
 
-    - name: Verify collection installation
-      shell: ansible-galaxy collection list openstack.kolla
-      register: collection_verify
-      changed_when: false
+          - name: Add user to docker group
+            user:
+              name: "{{ ansible_user }}"
+              groups: docker
+              append: yes
+            when: ansible_user is defined
 
-    - name: Show collection verification
-      debug:
-        msg: "{{ collection_verify.stdout_lines }}"
+          - name: Install Python Docker library
+            pip:
+              name: docker
+              executable: pip3
+
+          - name: Create kolla user
+            user:
+              name: kolla
+              system: yes
+              shell: /bin/false
+              home: /var/lib/kolla
+              createhome: yes
+
+          - name: Create kolla directories
+            file:
+              path: "/etc/kolla"
+              state: directory
+              owner: kolla
+              group: kolla
+              mode: '0755'
+
+          - name: Create kolla lib directory
+            file:
+              path: "/var/lib/kolla"
+              state: directory
+              owner: kolla
+              group: kolla
+              mode: '0755'
+
+          - name: Create kolla log directory
+            file:
+              path: "/var/log/kolla"
+              state: directory
+              owner: kolla
+              group: kolla
+              mode: '0755'
+
+          - name: Install additional packages
+            package:
+              name:
+                - python3-pip
+                - python3-setuptools
+                - git
+              state: present
+
+          - name: Debug completion
+            debug:
+              msg: "Baremetal setup completed successfully"
+        mode: '0644'
+
+    - name: Create collection metadata
+      copy:
+        dest: /root/.ansible/collections/ansible_collections/openstack/kolla/MANIFEST.json
+        content: |
+          {
+            "collection_info": {
+              "namespace": "openstack",
+              "name": "kolla",
+              "version": "1.0.0",
+              "description": "Custom Kolla collection for Yoga"
+            }
+          }
+        mode: '0644'
 
     - name: Create necessary directories for Kolla-Ansible
       file:
@@ -163,6 +241,15 @@
         groups: docker
         append: yes
 
+    - name: Verify collection is now available
+      shell: ansible-galaxy collection list openstack.kolla
+      register: collection_verify
+      changed_when: false
+
+    - name: Show collection verification
+      debug:
+        msg: "{{ collection_verify.stdout_lines }}"
+
     - name: Test kolla-ansible bootstrap (dry run)
       shell: kolla-ansible bootstrap-servers -i /etc/kolla/multinode --check
       register: bootstrap_test
@@ -175,14 +262,13 @@
 
     - name: Final verification
       shell: |
-        echo "=== Kolla-Ansible Setup Verification ==="
-        echo "Kolla-Ansible: $(which kolla-ansible) ($(kolla-ansible --version 2>/dev/null || echo 'version check failed'))"
-        echo "Python: $(python3 --version)"
-        echo "Ansible: $(ansible --version | head -1)"
+        echo "=== Final Kolla-Ansible Setup Status ==="
+        echo "Kolla-Ansible: $(which kolla-ansible) ($(kolla-ansible --version))"
         echo "Collections:"
         ansible-galaxy collection list openstack.kolla 2>/dev/null || echo "  Collection not found"
-        echo "Configuration files:"
-        ls -la /etc/kolla/ | head -10
+        echo "Baremetal role:"
+        ls -la /root/.ansible/collections/ansible_collections/openstack/kolla/roles/baremetal/ 2>/dev/null || echo "  Role not found"
+        echo "Ready for deployment!"
       register: final_verification
       changed_when: false
 

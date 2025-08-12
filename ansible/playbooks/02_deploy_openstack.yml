@@ -3,14 +3,66 @@
 - hosts: all[0]
   become: yes
   tasks:
+    - name: Test kolla-ansible connectivity
+      command: kolla-ansible --version
+      register: kolla_version
+      changed_when: false
+
+    - name: Show kolla-ansible version
+      debug:
+        msg: "Using {{ kolla_version.stdout }}"
+
     - name: Bootstrap servers
       command: kolla-ansible bootstrap-servers -i /etc/kolla/multinode
+      register: bootstrap_result
+      failed_when: bootstrap_result.rc != 0
+
+    - name: Show bootstrap results
+      debug:
+        msg: "{{ bootstrap_result.stdout_lines | default('Bootstrap completed') }}"
 
     - name: Run prechecks
       command: kolla-ansible prechecks -i /etc/kolla/multinode
+      register: precheck_result
+      failed_when: precheck_result.rc != 0
+
+    - name: Show precheck results
+      debug:
+        msg: "{{ precheck_result.stdout_lines | default('Prechecks passed') }}"
 
     - name: Deploy OpenStack
       command: kolla-ansible deploy -i /etc/kolla/multinode
+      register: deploy_result
+      failed_when: deploy_result.rc != 0
+      async: 3600  # Allow up to 1 hour for deployment
+      poll: 30     # Check every 30 seconds
+
+    - name: Show deployment results
+      debug:
+        msg: "{{ deploy_result.stdout_lines | default('Deployment completed') }}"
 
     - name: Post-deploy
       command: kolla-ansible post-deploy -i /etc/kolla/multinode
+      register: postdeploy_result
+      failed_when: postdeploy_result.rc != 0
+
+    - name: Show post-deploy results
+      debug:
+        msg: "{{ postdeploy_result.stdout_lines | default('Post-deploy completed') }}"
+
+    - name: Final verification
+      shell: |
+        echo "=== OpenStack Deployment Summary ==="
+        echo "Configuration: /etc/kolla/"
+        echo "Admin credentials: /etc/kolla/admin-openrc.sh"
+        if [ -f /etc/kolla/admin-openrc.sh ]; then
+          echo "Deployment appears successful!"
+        else
+          echo "Warning: admin-openrc.sh not found"
+        fi
+      register: final_check
+      changed_when: false
+
+    - name: Show final status
+      debug:
+        msg: "{{ final_check.stdout_lines }}"

@@ -2,4 +2,4 @@
 # Global variables for all hosts
 
 # Kolla-Ansible version to install
-kolla_ansible_version: "18.0.0"
+kolla_ansible_version: "17.2.0"
